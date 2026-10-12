@@ -17,11 +17,16 @@ def make_http_error(status_code: int, text: str = "") -> requests.exceptions.HTT
     return requests.exceptions.HTTPError(response=response)
 
 
-def make_payload(item, result_code: str = "00", result_msg: str = "NORMAL SERVICE.") -> dict:
+def make_payload(
+    item, result_code: str | int = "00", result_msg: str = "NORMAL SERVICE.", total_count=None
+) -> dict:
+    body = {"items": "" if item is None else {"item": item}}
+    if total_count is not None:
+        body["totalCount"] = total_count
     return {
         "response": {
             "header": {"resultCode": result_code, "resultMsg": result_msg},
-            "body": {"items": "" if item is None else {"item": item}},
+            "body": body,
         }
     }
 
@@ -119,6 +124,36 @@ class TestGetBusLocationByRoute:
         assert kwargs["params"]["cityCode"] == 21
         assert kwargs["params"]["routeId"] == "BSB5200002000"
         assert kwargs["params"]["serviceKey"] == bus_api.config.BUS_LC_INFO_INQIRE_SERVICE_KEY
+
+
+    def test_default_num_of_rows_leaves_room_for_busy_routes(self, monkeypatch):
+        mock_fetch_json = Mock(return_value=make_payload([{"vehicleno": "a"}]))
+        monkeypatch.setattr(bus_api, "fetch_json", mock_fetch_json)
+
+        bus_api.get_bus_location_by_route(city_code=21, route_id="BSB1")
+
+        assert mock_fetch_json.call_args.kwargs["params"]["numOfRows"] == 100
+
+    def test_truncated_response_logs_warning(self, monkeypatch, caplog):
+        payload = make_payload([{"vehicleno": "a"}, {"vehicleno": "b"}], total_count=5)
+        monkeypatch.setattr(bus_api, "fetch_json", Mock(return_value=payload))
+
+        with caplog.at_level(logging.WARNING, logger="bus_api"):
+            result = bus_api.get_bus_location_by_route(city_code=21, route_id="BSB1")
+
+        assert len(result) == 2
+        assert "Truncated response" in caplog.text
+        assert "totalCount=5" in caplog.text
+
+    @pytest.mark.parametrize("total_count", [2, "2", None])
+    def test_complete_response_does_not_warn(self, monkeypatch, caplog, total_count):
+        payload = make_payload([{"vehicleno": "a"}, {"vehicleno": "b"}], total_count=total_count)
+        monkeypatch.setattr(bus_api, "fetch_json", Mock(return_value=payload))
+
+        with caplog.at_level(logging.WARNING, logger="bus_api"):
+            bus_api.get_bus_location_by_route(city_code=21, route_id="BSB1")
+
+        assert "Truncated" not in caplog.text
 
 
 class TestLogicalSlot:

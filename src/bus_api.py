@@ -14,6 +14,8 @@ from secrets_mask import mask_service_key
 TAGO_BUS_ROUTE_BASE = "https://apis.data.go.kr/1613000/BusRouteInfoInqireService"
 TAGO_BUS_LC_BASE = "https://apis.data.go.kr/1613000/BusLcInfoInqireService"
 BUS_LOCATION_RAW_DIR = "data/raw/bus_location"
+# 노선당 최대 약 22대가 관측됐다(밤 시간대). 낮 피크 여유를 두어 100으로 잡는다.
+BUS_LOCATION_NUM_OF_ROWS = 100
 
 COLLECT_INTERVAL_MINUTES = 10
 
@@ -118,8 +120,23 @@ def _fetch_with_retry(fetch_fn: Callable[[], list[dict]], log_context: str) -> l
         time.sleep(2**attempt)
 
 
+def _warn_if_truncated(payload: dict, items: list[dict], log_context: str) -> None:
+    """totalCount가 받은 개수보다 크면 일부 차량이 빠진 것이므로 경고를 남긴다."""
+    total = payload["response"]["body"].get("totalCount")
+    if total is not None and int(total) > len(items):
+        logger.warning(
+            "Truncated response for %s: totalCount=%s but received %s items",
+            log_context,
+            total,
+            len(items),
+        )
+
+
 def get_bus_location_by_route(
-    city_code: int, route_id: str, page_no: int = 1, num_of_rows: int = 20
+    city_code: int,
+    route_id: str,
+    page_no: int = 1,
+    num_of_rows: int = BUS_LOCATION_NUM_OF_ROWS,
 ) -> list[dict]:
     params = {
         "serviceKey": config.BUS_LC_INFO_INQIRE_SERVICE_KEY,
@@ -130,11 +147,15 @@ def get_bus_location_by_route(
         "routeId": route_id,
     }
     url = f"{TAGO_BUS_LC_BASE}/getRouteAcctoBusLcList"
+    log_context = f"cityCode={city_code} routeId={route_id}"
 
-    return _fetch_with_retry(
-        lambda: _extract_items(fetch_json(url, params=params)),
-        log_context=f"cityCode={city_code} routeId={route_id}",
-    )
+    def fetch_page() -> list[dict]:
+        payload = fetch_json(url, params=params)
+        items = _extract_items(payload)
+        _warn_if_truncated(payload, items, log_context)
+        return items
+
+    return _fetch_with_retry(fetch_page, log_context=log_context)
 
 
 def logical_slot(moment: datetime) -> datetime:

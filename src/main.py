@@ -6,7 +6,14 @@ from bus_api import COLLECT_INTERVAL_MINUTES, logical_slot, save_bus_location
 from logging_config import configure_logging
 
 CITY_CODE = 21
-ROUTE_IDS = ["BSB5200002000"]
+# 2023-07-31 승하차 통계 상위 노선 중 지역·길이가 다른 5개 (68·81·31·115-1·24)
+ROUTE_IDS = [
+    "BSB5200068000",
+    "BSB5200081000",
+    "BSB5200031000",
+    "BSB5200115100",
+    "BSB5200024000",
+]
 
 logger = logging.getLogger(__name__)
 
