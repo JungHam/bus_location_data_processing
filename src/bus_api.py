@@ -49,6 +49,11 @@ def _extract_items(payload: dict) -> list[dict]:
     return item if isinstance(item, list) else [item]
 
 
+def normalize_route_no(value: int | str) -> str:
+    """노선번호는 수가 아니라 식별자다(A01, 5-1, 1001(심야) 등). API가 int/str로 섞어 주므로 문자열로 맞춘다."""
+    return str(value).strip()
+
+
 def get_route_no_list(city_code: int, page_no: int = 1, num_of_rows: int = 1000) -> list[dict]:
     params = {
         "serviceKey": config.BUS_ROUTE_INFO_INQIRE_SERVICE_KEY,
@@ -58,7 +63,10 @@ def get_route_no_list(city_code: int, page_no: int = 1, num_of_rows: int = 1000)
         "cityCode": city_code,
     }
     payload = fetch_json(f"{TAGO_BUS_ROUTE_BASE}/getRouteNoList", params=params)
-    return _extract_items(payload)
+    return [
+        {**item, "routeno": normalize_route_no(item["routeno"])} if "routeno" in item else item
+        for item in _extract_items(payload)
+    ]
 
 
 def _retry_reason(error: Exception) -> str | None:

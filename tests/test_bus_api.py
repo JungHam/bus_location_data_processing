@@ -111,6 +111,32 @@ class TestGetRouteNoList:
         assert kwargs["params"]["serviceKey"] == bus_api.config.BUS_ROUTE_INFO_INQIRE_SERVICE_KEY
 
 
+    def test_route_no_is_always_returned_as_string(self, monkeypatch):
+        items = [
+            {"routeid": "R2", "routeno": 2},
+            {"routeid": "R5", "routeno": "5-1"},
+            {"routeid": "RA", "routeno": "A01"},
+        ]
+        monkeypatch.setattr(bus_api, "fetch_json", Mock(return_value=make_payload(items)))
+
+        result = bus_api.get_route_no_list(city_code=21)
+
+        assert [r["routeno"] for r in result] == ["2", "5-1", "A01"]
+        assert [r["routeid"] for r in result] == ["R2", "R5", "RA"]
+
+
+class TestNormalizeRouteNo:
+    @pytest.mark.parametrize(
+        "value, expected",
+        [(68, "68"), ("68", "68"), ("A01", "A01"), ("115-1", "115-1"), (" 5-1 ", "5-1"), ("1001(심야)", "1001(심야)")],
+    )
+    def test_returns_string_identifier(self, value, expected):
+        assert bus_api.normalize_route_no(value) == expected
+
+    def test_int_and_str_forms_of_same_route_become_equal(self):
+        assert bus_api.normalize_route_no(2) == bus_api.normalize_route_no("2")
+
+
 class TestGetBusLocationByRoute:
     def test_builds_request_and_returns_extracted_items(self, monkeypatch):
         mock_fetch_json = Mock(return_value=make_payload([{"vehicleno": "70자1234"}]))
