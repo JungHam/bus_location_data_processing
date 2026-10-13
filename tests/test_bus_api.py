@@ -58,6 +58,12 @@ class TestExtractItems:
         assert "99" in caplog.text
 
 
+    @pytest.mark.parametrize("payload", [{}, [], None, {"unexpected": 1}])
+    def test_empty_or_malformed_payload_raises_retryable_error(self, payload):
+        with pytest.raises(bus_api.TagoEmptyPayloadError):
+            bus_api._extract_items(payload)
+
+
 class TestFetchWithRetry:
     def test_retryable_http_error_then_success(self):
         fetch_fn = Mock(side_effect=[make_http_error(502), make_http_error(502), ["ok"]])
@@ -266,6 +272,28 @@ class TestSaveBusLocation:
 
         with open(out_path, encoding="utf-8") as f:
             assert json.load(f) == good
+
+
+    def test_empty_payload_is_retried_through_real_call_path(self, monkeypatch):
+        mock_fetch_json = Mock(side_effect=[{}, make_payload([{"vehicleno": "a"}])])
+        monkeypatch.setattr(bus_api, "fetch_json", mock_fetch_json)
+
+        result = bus_api.get_bus_location_by_route(city_code=21, route_id="BSB1")
+
+        assert result == [{"vehicleno": "a"}]
+        assert mock_fetch_json.call_count == 2
+
+    def test_empty_payload_exhausts_retries(self, monkeypatch, caplog):
+        mock_fetch_json = Mock(return_value={})
+        monkeypatch.setattr(bus_api, "fetch_json", mock_fetch_json)
+
+        with caplog.at_level(logging.WARNING, logger="bus_api"):
+            with pytest.raises(bus_api.TagoEmptyPayloadError):
+                bus_api.get_bus_location_by_route(city_code=21, route_id="BSB1")
+
+        assert mock_fetch_json.call_count == bus_api.MAX_RETRIES + 1
+        assert "Retry 1/3" in caplog.text and "empty payload" in caplog.text
+        assert "Retries exhausted" in caplog.text
 
 
 class TestRetryLogging:

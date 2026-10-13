@@ -34,7 +34,13 @@ class TagoApiError(RuntimeError):
         self.result_code = str(result_code)
 
 
+class TagoEmptyPayloadError(RuntimeError):
+    """응답 본문이 비었거나({}) response 키가 없다. 일시적인 오류로 보고 재시도한다."""
+
+
 def _extract_items(payload: dict) -> list[dict]:
+    if not isinstance(payload, dict) or "response" not in payload:
+        raise TagoEmptyPayloadError(f"Missing 'response' in payload: {str(payload)[:100]}")
     header = payload["response"]["header"]
     if header["resultCode"] != "00":
         logger.error(
@@ -77,6 +83,8 @@ def _retry_reason(error: Exception) -> str | None:
     elif isinstance(error, TagoApiError):
         if error.result_code in RETRYABLE_RESULT_CODES:
             return f"resultCode {error.result_code}"
+    elif isinstance(error, TagoEmptyPayloadError):
+        return "empty payload"
     elif isinstance(error, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
         return type(error).__name__
     return None
@@ -93,7 +101,7 @@ def _fetch_with_retry(fetch_fn: Callable[[], list[dict]], log_context: str) -> l
         is_last_attempt = attempt == MAX_RETRIES
         try:
             items = fetch_fn()
-        except (requests.exceptions.RequestException, TagoApiError) as e:
+        except (requests.exceptions.RequestException, TagoApiError, TagoEmptyPayloadError) as e:
             reason = _retry_reason(e)
             if reason is None:
                 logger.error("Non-retryable HTTP error for %s: %s", log_context, _describe(e))
