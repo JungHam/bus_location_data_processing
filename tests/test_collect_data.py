@@ -1,6 +1,10 @@
+import os
 from datetime import datetime, timedelta
 from unittest.mock import Mock
 
+import pytest
+
+import bus_api
 import collect_data
 
 SLOT = datetime(2026, 10, 13, 8, 0)
@@ -36,6 +40,36 @@ class TestCollectOnce:
         collect_data.collect_once(SLOT)
 
         assert [call.args[2] for call in save.call_args_list] == [SLOT, SLOT]
+
+    def test_raise_on_failure_raises_after_trying_every_route(self, monkeypatch):
+        monkeypatch.setattr(collect_data, "ROUTE_IDS", ["R1", "R2", "R3"])
+        save = Mock(side_effect=[KeyError("response"), "path2", RuntimeError("boom")])
+        monkeypatch.setattr(collect_data, "save_bus_location", save)
+
+        with pytest.raises(collect_data.CollectionFailedError) as exc_info:
+            collect_data.collect_once(SLOT, raise_on_failure=True)
+
+        assert save.call_count == 3
+        assert exc_info.value.failed_route_ids == ["R1", "R3"]
+
+    def test_empty_response_is_not_a_failure(self, monkeypatch):
+        monkeypatch.setattr(collect_data, "ROUTE_IDS", ["R1", "R2"])
+        monkeypatch.setattr(collect_data, "save_bus_location", Mock(return_value=None))
+
+        collect_data.collect_once(SLOT, raise_on_failure=True)
+
+    def test_skip_existing_calls_only_routes_without_a_saved_file(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(bus_api, "BUS_LOCATION_RAW_DIR", str(tmp_path))
+        monkeypatch.setattr(collect_data, "ROUTE_IDS", ["R1", "R2"])
+        saved = bus_api.bus_location_path("R1", SLOT)
+        os.makedirs(os.path.dirname(saved))
+        open(saved, "w").close()
+        save = Mock(return_value="path")
+        monkeypatch.setattr(collect_data, "save_bus_location", save)
+
+        collect_data.collect_once(SLOT, skip_existing=True)
+
+        assert [call.args[1] for call in save.call_args_list] == ["R2"]
 
 
 class TestRun:

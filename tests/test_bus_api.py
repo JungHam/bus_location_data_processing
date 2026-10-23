@@ -222,9 +222,11 @@ class TestSaveBusLocation:
         buses = [{"vehicleno": "70자1234"}]
         monkeypatch.setattr(bus_api, "get_bus_location_by_route", Mock(return_value=buses))
 
-        out_path = bus_api.save_bus_location(city_code=21, route_id="BSB5200002000")
+        out_path = bus_api.save_bus_location(
+            city_code=21, route_id="BSB5200002000", slot=datetime(2026, 10, 12, 10, 3)
+        )
 
-        assert re.search(r"dt=\d{4}-\d{2}-\d{2}/hour=\d{2}/", out_path)
+        assert re.search(r"dt=2026-10-12/hour=10/", out_path)
         with open(out_path, encoding="utf-8") as f:
             assert json.load(f) == buses
 
@@ -257,7 +259,7 @@ class TestSaveBusLocation:
         monkeypatch.setattr(bus_api, "BUS_LOCATION_RAW_DIR", str(tmp_path / "bus_location"))
         monkeypatch.setattr(bus_api, "get_bus_location_by_route", Mock(return_value=[]))
 
-        assert bus_api.save_bus_location(21, "BSB1") is None
+        assert bus_api.save_bus_location(21, "BSB1", datetime(2026, 10, 12, 10, 3)) is None
         assert not (tmp_path / "bus_location").exists()
 
     def test_empty_response_does_not_overwrite_existing_data(self, monkeypatch, tmp_path):

@@ -180,25 +180,31 @@ def logical_slot(moment: datetime) -> datetime:
     return moment.replace(minute=minute, second=0, microsecond=0)
 
 
-def save_bus_location(
-    city_code: int, route_id: str, slot: datetime | None = None
-) -> str | None:
+def bus_location_path(route_id: str, slot: datetime) -> str:
+    """수집 구간(slot) 키로 정해지는 저장 경로. 저장과 '이미 저장됐는지' 확인이 같은 규칙을 쓴다."""
+    slot = logical_slot(slot)
+    return os.path.join(
+        BUS_LOCATION_RAW_DIR,
+        f"dt={slot:%Y-%m-%d}",
+        f"hour={slot:%H}",
+        f"{route_id}_{slot:%Y%m%d%H%M}.json",
+    )
+
+
+def save_bus_location(city_code: int, route_id: str, slot: datetime) -> str | None:
     """노선의 버스 위치를 수집 구간(slot) 키로 저장한다. 비어 있으면 저장하지 않고 None을 돌려준다.
 
-    slot을 주지 않으면 지금 시각이 속한 구간을 쓴다. 오케스트레이터가 붙으면 논리 시각을 여기로 넘긴다.
+    slot은 호출하는 쪽의 논리 시각(DAG는 logical date)이다. 실행 시각으로 키를 만들지 않으므로
+    같은 구간의 재실행은 늘 같은 키가 된다.
     """
     buses = get_bus_location_by_route(city_code, route_id)
     if not buses:
         logger.warning("Skip saving empty response for routeId=%s", route_id)
         return None
 
-    slot = logical_slot(slot or datetime.now())
-    partition_dir = os.path.join(
-        BUS_LOCATION_RAW_DIR, f"dt={slot:%Y-%m-%d}", f"hour={slot:%H}"
-    )
-    os.makedirs(partition_dir, exist_ok=True)
+    out_path = bus_location_path(route_id, slot)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
-    out_path = os.path.join(partition_dir, f"{route_id}_{slot:%Y%m%d%H%M}.json")
     tmp_path = f"{out_path}.tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(buses, f, ensure_ascii=False, indent=2)

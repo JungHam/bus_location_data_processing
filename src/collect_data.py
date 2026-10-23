@@ -1,9 +1,10 @@
 import logging
+import os
 import time
 from datetime import datetime, timedelta
 from typing import Callable
 
-from bus_api import COLLECT_INTERVAL_MINUTES, logical_slot, save_bus_location
+from bus_api import COLLECT_INTERVAL_MINUTES, bus_location_path, logical_slot, save_bus_location
 
 CITY_CODE = 21
 # 2023-07-31 승하차 통계 상위 노선 중 지역·길이가 다른 5개 (68·81·31·115-1·24)
@@ -18,15 +19,37 @@ ROUTE_IDS = [
 logger = logging.getLogger(__name__)
 
 
-def collect_once(slot: datetime) -> None:
+class CollectionFailedError(RuntimeError):
+    def __init__(self, failed_route_ids: list[str]) -> None:
+        super().__init__(f"Collection failed for routes: {', '.join(failed_route_ids)}")
+        self.failed_route_ids = failed_route_ids
+
+
+def collect_once(
+    slot: datetime, *, raise_on_failure: bool = False, skip_existing: bool = False
+) -> None:
+    """모든 노선을 돈 뒤, raise_on_failure면 실패한 노선을 모아 예외로 알린다.
+
+    skip_existing이면 이 구간의 파일이 이미 있는 노선은 부르지 않는다(재시도에서 실패한 노선만 다시 받는다).
+    """
+    failed: list[str] = []
+    first_error: Exception | None = None
     for route_id in ROUTE_IDS:
+        if skip_existing and os.path.exists(bus_location_path(route_id, slot)):
+            logger.info("Skip routeId=%s slot=%s: already saved", route_id, slot)
+            continue
         try:
             out_path = save_bus_location(CITY_CODE, route_id, slot)
-        except Exception:
+        except Exception as e:
             logger.exception("Collection failed for routeId=%s slot=%s", route_id, slot)
+            failed.append(route_id)
+            first_error = first_error or e
             continue
         if out_path:
             logger.info("Saved %s", out_path)
+
+    if failed and raise_on_failure:
+        raise CollectionFailedError(failed) from first_error
 
 
 def next_slot_after(slot: datetime, now: datetime) -> datetime:
