@@ -3,6 +3,8 @@ import logging
 import os
 from datetime import date
 
+import requests
+
 import config
 from fetch_json import fetch_json
 
@@ -19,6 +21,30 @@ class AsosApiError(RuntimeError):
     def __init__(self, result_code: str, result_msg: str) -> None:
         super().__init__(f"ASOS API error: {result_code} {result_msg}")
         self.result_code = str(result_code)
+
+
+class AsosServiceKeyError(AsosApiError):
+    """공공데이터포털 게이트웨이가 서비스키를 거절했다(403, returnReasonCode 30). 재시도해도 풀리지 않는다.
+
+    ASOS 서비스의 resultCode(예: 99 = 전날 자료까지 제공)와는 응답 모양과 코드 체계가 다르다.
+    """
+
+
+# 게이트웨이가 키를 거절할 때의 응답 코드. 403 본문의 OpenAPI_ServiceResponse.cmmMsgHeader에 들어 있다.
+SERVICE_KEY_NOT_REGISTERED = "30"
+
+
+def _raise_if_service_key_error(response: requests.Response) -> None:
+    try:
+        header = response.json()["OpenAPI_ServiceResponse"]["cmmMsgHeader"]
+    except (ValueError, KeyError, TypeError):
+        return
+    if str(header.get("returnReasonCode")) == SERVICE_KEY_NOT_REGISTERED:
+        logger.error("ASOS service key rejected: %s", header.get("errMsg"))
+        # 키 오류에는 HTTPError의 정보(상태·URL)가 더 필요 없어 연결하지 않는다. 키 가리기는 fetch_json이 한다
+        raise AsosServiceKeyError(
+            SERVICE_KEY_NOT_REGISTERED, header.get("errMsg", "")
+        ) from None
 
 
 class AsosEmptyPayloadError(RuntimeError):
@@ -59,7 +85,12 @@ def get_hourly_by_date(day: date, station_id: int = BUSAN_STATION_ID) -> list[di
         "endHh": "23",
         "stnIds": station_id,
     }
-    items = _extract_items(fetch_json(KMA_ASOS_HOURLY_URL, params=params))
+    try:
+        payload = fetch_json(KMA_ASOS_HOURLY_URL, params=params)
+    except requests.exceptions.HTTPError as error:
+        _raise_if_service_key_error(error.response)
+        raise
+    items = _extract_items(payload)
     if len(items) < HOURS_PER_DAY:
         logger.warning(
             "Missing hours for stnId=%s date=%s: %s of %s hours",

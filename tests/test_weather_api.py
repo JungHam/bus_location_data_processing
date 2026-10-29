@@ -4,6 +4,7 @@ import os
 from datetime import date
 
 import pytest
+import requests
 
 import weather_api
 
@@ -83,6 +84,54 @@ class TestGetHourlyByDate:
 
         assert items == partial
         assert "20 of 24 hours" in caplog.text
+
+
+def http_error(status: int, body: dict) -> requests.exceptions.HTTPError:
+    response = requests.Response()
+    response.status_code = status
+    response._content = json.dumps(body).encode("utf-8")
+    # 실제 requests 메시지처럼 키가 든 URL을 넣어, 키가 새지 않는지 확인한다
+    return requests.exceptions.HTTPError(
+        f"{status} Client Error for url: https://x?serviceKey=REAL_KEY", response=response
+    )
+
+
+KEY_REJECTED_BODY = {
+    "OpenAPI_ServiceResponse": {
+        "cmmMsgHeader": {
+            "errMsg": "SERVICE_KEY_IS_NOT_REGISTERED_ERROR",
+            "returnAuthMsg": "등록되지 않은 서비스키",
+            "returnReasonCode": "30",
+        }
+    }
+}
+
+
+class TestServiceKeyError:
+    def test_rejected_key_raises_a_distinct_api_error_without_the_key(self, monkeypatch):
+        def fake_fetch_json(url, **kwargs):
+            raise http_error(403, KEY_REJECTED_BODY)
+
+        monkeypatch.setattr(weather_api, "fetch_json", fake_fetch_json)
+
+        with pytest.raises(weather_api.AsosServiceKeyError) as exc_info:
+            weather_api.get_hourly_by_date(date(2026, 10, 25))
+
+        error = exc_info.value
+        assert isinstance(error, weather_api.AsosApiError)
+        assert error.result_code == "30"
+        assert error.__cause__ is None and error.__suppress_context__
+        assert "REAL_KEY" not in str(error)
+
+    def test_other_http_errors_are_not_treated_as_key_errors(self, monkeypatch):
+        def fake_fetch_json(url, **kwargs):
+            raise http_error(500, {"message": "Internal Server Error"})
+
+        monkeypatch.setattr(weather_api, "fetch_json", fake_fetch_json)
+
+        with pytest.raises(requests.exceptions.HTTPError) as exc_info:
+            weather_api.get_hourly_by_date(date(2026, 10, 25))
+        assert not isinstance(exc_info.value, weather_api.AsosApiError)
 
 
 class TestSaveWeatherDay:
